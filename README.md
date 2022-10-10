@@ -1,15 +1,8 @@
-![](https://runelite.net/img/logo.png)
-# runelite-discord-bot [![Discord](https://img.shields.io/discord/301497432909414422.svg)](https://discord.gg/mePCs8U)
+![](https://cdn.discordapp.com/icons/886733267284398130/ace25258386012275b25a58538981320.png?size=128)
 
-https://probot.github.io/docs/configuration/
+# 117 HD
+117HD Github Bot
 
-If your app cannot access the team, add a personal api key with it
-```
-TEAM_TOKEN=bk15b981ubd4jbd31b958j154f
-```
-
-Run
-```
-npm install
-npm start
-```
+# Links
+- Discord https://discord.gg/U4p6ChjgSE
+- Twitter https://twitter.com/117scape
