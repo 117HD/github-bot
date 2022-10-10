@@ -3,9 +3,9 @@ import { OctokitResponse, GetResponseTypeFromEndpointMethod } from "@octokit/typ
 type Octokit = InstanceType<typeof ProbotOctokit>;
 type PullsListFilesResponseData = GetResponseTypeFromEndpointMethod<Octokit["pulls"]["listFiles"]>["data"]
 
-const NEW_PLUGIN = "pack added";
-const REMOVE_PLUGIN = "pack removed";
-const PLUGIN_CHANGE = "pack change";
+const NEW_PACK = "pack added";
+const REMOVE_PACK = "pack removed";
+const PACK_CHANGE = "pack change";
 const NON_AUTHOR_PLUGIN_CHANGE = "non-author plugin change";
 const READY_TO_MERGE = "ready to merge";
 const URL_ISSUE = "Invalid URL";
@@ -51,9 +51,9 @@ export = (app: Probot) => {
 				}
 			});
 
-		await setHasLabel(pluginFiles.some(f => f.status == "added"), NEW_PLUGIN);
-		await setHasLabel(pluginFiles.some(f => f.status == "modified"), PLUGIN_CHANGE);
-		await setHasLabel(pluginFiles.some(f => f.status == "removed"), REMOVE_PLUGIN);
+		await setHasLabel(pluginFiles.some(f => f.status == "added"), NEW_PACK);
+		await setHasLabel(pluginFiles.some(f => f.status == "modified"), PACK_CHANGE);
+		await setHasLabel(pluginFiles.some(f => f.status == "removed"), REMOVE_PACK);
 
 		let diffLines: string[] = [];
 		const prAuthor = (await github.issues.get(context.issue())).data.user!.login.toLowerCase();
@@ -62,7 +62,7 @@ export = (app: Probot) => {
 		await Promise.all(pluginFiles.map(async file => {
 			let pluginName = file.filename.replace("packs/", "");
 			if (file.status == "removed") {
-				diffLines.push(`Removed \`${pluginName}\` plugin`);
+				diffLines.push(`Removed resource Pack \`${pluginName}\`. `);
 			}
 			let readKV = (res: OctokitResponse<string>) => res.data.split("\n")
 				.map(i => /([^=]+)=(.*)/.exec(i))
@@ -74,7 +74,7 @@ export = (app: Probot) => {
 			let newPlugin = readKV(await github.request(file.raw_url));
 
 			let extractURL = (cloneURL: string) => {
-				let urlmatch = /https:\/\/github\.com\/([^/]+)\/([^.]+).git/.exec(cloneURL);
+				let urlmatch = /https:\/\/github\.com\/([^/]+)\/([^.]+)/.exec(cloneURL);
 				if (!urlmatch) {
 					urlvalid = false;
 					throw `Plugin repository must be a github https clone url, not \`${cloneURL}\``;
@@ -82,8 +82,8 @@ export = (app: Probot) => {
 				let [, user, repo] = urlmatch;
 				return { user, repo };
 			};
-			let { user, repo } = extractURL(newPlugin.repository);
 
+			let { user, repo } = extractURL(newPlugin.repository);
 			let changedPluginAuthors: Set<string> = new Set();
 			let sanitizeAuthor = (author: string) => author.trim().toLowerCase();
 			let addPluginAuthors = (authors?: string) => {
@@ -95,9 +95,8 @@ export = (app: Probot) => {
 			};
 			changedPluginAuthors.add(sanitizeAuthor(user));
 			addPluginAuthors(newPlugin.authors);
-
 			if (file.status == "modified") {
-				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/blob/main/packs/${pluginName}`));
+				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/raw/main/packs/${pluginName}`));
 				let oldPluginURL = extractURL(oldPlugin.repository);
 				changedPluginAuthors.add(sanitizeAuthor(oldPluginURL.user));
 				addPluginAuthors(oldPlugin.authors);
@@ -106,7 +105,7 @@ export = (app: Probot) => {
 				diffLines.push(`New plugin \`${pluginName}\`: https://github.com/${user}/${repo}/tree/${newPlugin.commit}`);
 			} else if (file.status == "renamed") {
 				let oldPluginName = ((file as any).previous_filename as string).replace("packs/", "");
-				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/blob/main/packs/${oldPluginName}`));
+				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/raw/main/packs/${oldPluginName}`));
 				let oldPluginURL = extractURL(oldPlugin.repository);
 				diffLines.push(`\`${oldPluginName}\` renamed to \`${pluginName}\`; this will cause all current installs to become uninstalled.
 [${oldPlugin.commit}...${newPlugin.commit}](https://github.com/${oldPluginURL.user}/${oldPluginURL.repo}/compare/${oldPlugin.commit}...${user}:${newPlugin.commit})`);
@@ -125,7 +124,7 @@ export = (app: Probot) => {
 			await setHasLabel(false, NON_AUTHOR_PLUGIN_CHANGE);
 		}
 
-		if (urlvalid) {
+		if (!urlvalid) {
 			difftext = "**Plugin repository must be a github https clone url**\n\n" + difftext;
 			await setHasLabel(true, URL_ISSUE);
 		} else {
@@ -135,8 +134,6 @@ export = (app: Probot) => {
 		if (dependencyFiles.length > 0 || otherFiles.length > 0) {
 			difftext = "**Includes non-plugin changes**\n\n" + difftext;
 		}
-
-		console.log(difftext)
 
 		let marker = "<!-- rlphc -->";
 		let body = marker + "\n" + difftext;
@@ -156,7 +153,7 @@ export = (app: Probot) => {
 		let { data: labelList } = await github.issues.listLabelsOnIssue(context.issue());
 		let labels = new Set(labelList.map(l => l.name));
 
-		if (!labels.has(PLUGIN_CHANGE)) return;
+		if (!labels.has(PACK_CHANGE)) return;
 
 		let { data: reviews } = await github.pulls.listReviews(context.pullRequest());
 		if (reviews.length <= 0) return;
