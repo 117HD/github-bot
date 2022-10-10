@@ -1,0 +1,188 @@
+import { Probot, ProbotOctokit } from "probot";
+import { OctokitResponse, GetResponseTypeFromEndpointMethod } from "@octokit/types";
+type Octokit = InstanceType<typeof ProbotOctokit>;
+type PullsListFilesResponseData = GetResponseTypeFromEndpointMethod<Octokit["pulls"]["listFiles"]>["data"]
+
+const NEW_PLUGIN = "pack added";
+const REMOVE_PLUGIN = "pack removed";
+const PLUGIN_CHANGE = "pack change";
+const NON_AUTHOR_PLUGIN_CHANGE = "non-author plugin change";
+const READY_TO_MERGE = "ready to merge";
+const URL_ISSUE = "Invalid URL";
+
+const TEAM = {
+	org: "runelite",
+	team_slug: "plugin-approvers",
+};
+
+// If you run the app outside of an org it can't get to the org's teams
+let globalTeamGithub : Octokit | undefined;
+if (process.env.TEAM_TOKEN) {
+	globalTeamGithub = new ProbotOctokit({auth: {token: process.env.TEAM_TOKEN}});
+}
+
+export = (app: Probot) => {
+	app.on(['pull_request.opened', 'pull_request.synchronize', 'pull_request.reopened'], async context => {
+		const github = context.octokit;
+
+		let { data: labelList } = await github.issues.listLabelsOnIssue(context.issue());
+		let labels = new Set(labelList.map(l => l.name));
+
+		const setHasLabel = async (condition: boolean, label: string) => {
+			if (condition && !labels.has(label)) {
+				await github.issues.addLabels(context.issue({ labels: [label] }));
+			} else if (!condition && labels.has(label)) {
+				await github.issues.removeLabel(context.issue({ name: label }));
+			}
+		};
+
+		await setHasLabel(false, READY_TO_MERGE);
+
+		let pluginFiles: PullsListFilesResponseData = [];
+		let dependencyFiles: PullsListFilesResponseData = [];
+		let otherFiles: PullsListFilesResponseData = [];
+		(await github.pulls.listFiles(context.pullRequest()))
+			.data
+			.forEach(f => {
+				if (f.filename.startsWith("packs/")) {
+					pluginFiles.push(f);
+				} else {
+					otherFiles.push(f);
+				}
+			});
+
+		await setHasLabel(pluginFiles.some(f => f.status == "added"), NEW_PLUGIN);
+		await setHasLabel(pluginFiles.some(f => f.status == "modified"), PLUGIN_CHANGE);
+		await setHasLabel(pluginFiles.some(f => f.status == "removed"), REMOVE_PLUGIN);
+
+		let diffLines: string[] = [];
+		const prAuthor = (await github.issues.get(context.issue())).data.user!.login.toLowerCase();
+		let nonAuthorChange = false;
+		let urlvalid = true;
+		await Promise.all(pluginFiles.map(async file => {
+			let pluginName = file.filename.replace("packs/", "");
+			if (file.status == "removed") {
+				diffLines.push(`Removed \`${pluginName}\` plugin`);
+			}
+			let readKV = (res: OctokitResponse<string>) => res.data.split("\n")
+				.map(i => /([^=]+)=(.*)/.exec(i))
+				.filter(i => i)
+				.reduce((acc: { [key: string]: string }, val) => {
+					acc[val![1]] = val![2];
+					return acc;
+				}, {});
+			let newPlugin = readKV(await github.request(file.raw_url));
+
+			let extractURL = (cloneURL: string) => {
+				let urlmatch = /https:\/\/github\.com\/([^/]+)\/([^.]+).git/.exec(cloneURL);
+				if (!urlmatch) {
+					urlvalid = false;
+					throw `Plugin repository must be a github https clone url, not \`${cloneURL}\``;
+				}
+				let [, user, repo] = urlmatch;
+				return { user, repo };
+			};
+			let { user, repo } = extractURL(newPlugin.repository);
+
+			let changedPluginAuthors: Set<string> = new Set();
+			let sanitizeAuthor = (author: string) => author.trim().toLowerCase();
+			let addPluginAuthors = (authors?: string) => {
+				if (!authors) {
+					return;
+				}
+				authors.split(',')
+					.forEach(author => changedPluginAuthors.add(sanitizeAuthor(author)));
+			};
+			changedPluginAuthors.add(sanitizeAuthor(user));
+			addPluginAuthors(newPlugin.authors);
+
+			if (file.status == "modified") {
+				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/blob/main/packs/${pluginName}`));
+				let oldPluginURL = extractURL(oldPlugin.repository);
+				changedPluginAuthors.add(sanitizeAuthor(oldPluginURL.user));
+				addPluginAuthors(oldPlugin.authors);
+				diffLines.push(`\`${pluginName}\`: [${oldPlugin.commit}...${newPlugin.commit}](https://github.com/${oldPluginURL.user}/${oldPluginURL.repo}/compare/${oldPlugin.commit}...${user}:${newPlugin.commit})`);
+			} else if (file.status == "added") {
+				diffLines.push(`New plugin \`${pluginName}\`: https://github.com/${user}/${repo}/tree/${newPlugin.commit}`);
+			} else if (file.status == "renamed") {
+				let oldPluginName = ((file as any).previous_filename as string).replace("packs/", "");
+				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/blob/main/packs/${oldPluginName}`));
+				let oldPluginURL = extractURL(oldPlugin.repository);
+				diffLines.push(`\`${oldPluginName}\` renamed to \`${pluginName}\`; this will cause all current installs to become uninstalled.
+[${oldPlugin.commit}...${newPlugin.commit}](https://github.com/${oldPluginURL.user}/${oldPluginURL.repo}/compare/${oldPlugin.commit}...${user}:${newPlugin.commit})`);
+			} else {
+				diffLines.push(`What is a \`${file.status}\`?`);
+			}
+
+			nonAuthorChange ||= !changedPluginAuthors.has(prAuthor);
+		}));
+		let difftext = diffLines.join("\n\n");
+
+		if (nonAuthorChange) {
+			difftext = "**Includes changes by non-author**\n\n" + difftext;
+			await setHasLabel(true, NON_AUTHOR_PLUGIN_CHANGE);
+		} else {
+			await setHasLabel(false, NON_AUTHOR_PLUGIN_CHANGE);
+		}
+
+		if (urlvalid) {
+			difftext = "**Plugin repository must be a github https clone url**\n\n" + difftext;
+			await setHasLabel(true, URL_ISSUE);
+		} else {
+			await setHasLabel(false, URL_ISSUE);
+		}
+
+		if (dependencyFiles.length > 0 || otherFiles.length > 0) {
+			difftext = "**Includes non-plugin changes**\n\n" + difftext;
+		}
+
+		console.log(difftext)
+
+		let marker = "<!-- rlphc -->";
+		let body = marker + "\n" + difftext;
+		let sticky = (await github.issues.listComments(context.issue()))
+			.data.find(c => c.body?.startsWith(marker));
+		if (sticky) {
+			await github.issues.updateComment(context.issue({ comment_id: sticky.id, body }));
+		} else if (difftext) {
+			await github.issues.createComment(context.issue({ body }));
+		}
+	});
+
+	app.on(["pull_request_review.submitted"], async context => {
+		const github = context.octokit;
+		const teamGithub = globalTeamGithub || github;
+
+		let { data: labelList } = await github.issues.listLabelsOnIssue(context.issue());
+		let labels = new Set(labelList.map(l => l.name));
+
+		if (!labels.has(PLUGIN_CHANGE)) return;
+
+		let { data: reviews } = await github.pulls.listReviews(context.pullRequest());
+		if (reviews.length <= 0) return;
+
+		let { data: memberList } = await teamGithub.teams.listMembersInOrg(TEAM);
+		let members = new Set(memberList.map(m => m.login));
+
+		let reviewStates: { [key: string]: boolean } = {};
+		reviews.filter(r => r.user && members.has(r.user.login))
+			.forEach(r => {
+				let approved = r.state == "APPROVED" || r.body == "lgtm";
+				if (approved || (!approved && r.state != "COMMENTED")) {
+					reviewStates[r.user!.login] = approved;
+				}
+			});
+		let unapproved = Object.keys(reviewStates).filter(k => !reviewStates[k]);
+
+		if (unapproved.length > 0) {
+			console.log(`Unapproved for #${context.issue().issue_number}: ${unapproved}`);
+			if (labels.has(READY_TO_MERGE)) {
+				await github.issues.removeLabel(context.issue({ name: READY_TO_MERGE }));
+			}
+		} else if (Object.keys(reviewStates).length != 0) {
+			if (!labels.has(READY_TO_MERGE)) {
+				await github.issues.addLabels(context.issue({ labels: [READY_TO_MERGE] }));
+			}
+		}
+	});
+}
