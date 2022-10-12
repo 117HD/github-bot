@@ -6,7 +6,7 @@ type PullsListFilesResponseData = GetResponseTypeFromEndpointMethod<Octokit["pul
 const NEW_PACK = "pack added";
 const REMOVE_PACK = "pack removed";
 const PACK_CHANGE = "pack change";
-const NON_AUTHOR_PLUGIN_CHANGE = "non-author plugin change";
+const NON_AUTHOR_PACK_CHANGE = "non-author pack change";
 const READY_TO_MERGE = "ready to merge";
 const URL_ISSUE = "Invalid URL";
 
@@ -77,7 +77,7 @@ export = (app: Probot) => {
 				let urlmatch = /https:\/\/github\.com\/([^/]+)\/([^.]+)/.exec(cloneURL);
 				if (!urlmatch) {
 					urlvalid = false;
-					throw `Plugin repository must be a github https clone url, not \`${cloneURL}\``;
+					throw `Pack repository must be a github https clone url, not \`${cloneURL}\``;
 				}
 				let [, user, repo] = urlmatch;
 				return { user, repo };
@@ -102,7 +102,7 @@ export = (app: Probot) => {
 				addPluginAuthors(oldPlugin.authors);
 				diffLines.push(`\`${pluginName}\`: [${oldPlugin.commit}...${newPlugin.commit}](https://github.com/${oldPluginURL.user}/${oldPluginURL.repo}/compare/${oldPlugin.commit}...${user}:${newPlugin.commit})`);
 			} else if (file.status == "added") {
-				diffLines.push(`New plugin \`${pluginName}\`: https://github.com/${user}/${repo}/tree/${newPlugin.commit}`);
+				diffLines.push(`New pack \`${pluginName}\`: https://github.com/${user}/${repo}/tree/${newPlugin.commit}`);
 			} else if (file.status == "renamed") {
 				let oldPluginName = ((file as any).previous_filename as string).replace("packs/", "");
 				let oldPlugin = readKV(await github.request(`https://github.com/${context.repo().owner}/${context.repo().repo}/raw/main/packs/${oldPluginName}`));
@@ -119,9 +119,9 @@ export = (app: Probot) => {
 
 		if (nonAuthorChange) {
 			difftext = "**Includes changes by non-author**\n\n" + difftext;
-			await setHasLabel(true, NON_AUTHOR_PLUGIN_CHANGE);
+			await setHasLabel(true, NON_AUTHOR_PACK_CHANGE);
 		} else {
-			await setHasLabel(false, NON_AUTHOR_PLUGIN_CHANGE);
+			await setHasLabel(false, NON_AUTHOR_PACK_CHANGE);
 		}
 
 		if (!urlvalid) {
@@ -132,7 +132,7 @@ export = (app: Probot) => {
 		}
 
 		if (dependencyFiles.length > 0 || otherFiles.length > 0) {
-			difftext = "**Includes non-plugin changes**\n\n" + difftext;
+			difftext = "**Includes non-pack changes**\n\n" + difftext;
 		}
 
 		let marker = "<!-- rlphc -->";
