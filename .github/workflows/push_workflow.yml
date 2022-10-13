@@ -15,7 +15,7 @@ jobs:
           echo "${{ secrets.APP_ID }}" > .env
           echo "${{ secrets.LOG_LEVEL}}" >> .env
           echo "${{ secrets.SSH}}" >> .env
-          echo "${{ secrets.WEB_PROXY_URL}}" >> .env
+          echo "${{ secrets.WEBHOOK_PROXY_URL}}" >> .env
           echo "${{ secrets.WEBHOOK_SECRET}}" >> .env
 
   deploy:
