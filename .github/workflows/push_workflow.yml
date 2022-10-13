@@ -10,11 +10,13 @@ jobs:
       - uses: actions/checkout@v2
       - name: Install Project Requirements
         run: yarn install
-      - name: Set Up ENV
+      - name: Set up .pem
+        run: |
+          echo "${{ secrets.SSH }}" > private-key.pem
+      - name: Set up .env
         run: |
           echo "${{ secrets.APP_ID }}" > .env
           echo "${{ secrets.LOG_LEVEL}}" >> .env
-          echo "${{ secrets.SSH}}" >> .env
           echo "${{ secrets.WEBHOOK_PROXY_URL}}" >> .env
           echo "${{ secrets.WEBHOOK_SECRET}}" >> .env
 
