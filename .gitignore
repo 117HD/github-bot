@@ -3,3 +3,4 @@ lib
 .env
 *.pem
 .idea/
+yarn.lock
